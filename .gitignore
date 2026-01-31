@@ -1,0 +1,54 @@
+# Unreal Engine
+# Ignore build intermediates, local caches, and user-specific files
+
+# Generated binary and intermediate folders
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.opensdf
+*.sdf
+*.suo
+*.user
+.vs/
+.vscode/
+.vsconfig
+
+# Build artifacts and IDE files
+Build/
+Builds/
+*.xcodeproj
+*.xcworkspace
+*.xcuserdata
+*.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Visual Studio cache / build files
+.vs/
+ipch/
+*.ilk
+*.pdb
+*.obj
+*.log
+
+# Compiled Python files
+__pycache__/
+
+# Unreal autosaves / backups
+*.autosave
+*.backup
+
+# JetBrains Rider
+.idea/
+
+# Temporary plugin outputs
+Plugins/*/Intermediate/
+Plugins/*/Binaries/
+
+# Ignore user-specific Unreal project settings (optional)
+*.user
+
+Content/
