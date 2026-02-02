@@ -1,5 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
 using UnrealBuildTool;
 
 public class DungeonCraft_Pro_1 : ModuleRules
@@ -8,52 +6,45 @@ public class DungeonCraft_Pro_1 : ModuleRules
     {
         PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
+        // Add the public include paths
         PublicIncludePaths.AddRange(
             new string[] {
-				// ... add public include paths required here ...
-			}
-            );
+                "Plugins/DungeonCraft_Pro_1/Source/DungeonCraft_Pro_1/Public",
+                "Plugins/DungeonCraft_Pro_1/Source/DungeonCraft_Pro_1/Public/DungeonGraph"
+            }
+        );
 
-
+        // Add the private include paths
         PrivateIncludePaths.AddRange(
             new string[] {
-				// ... add other private include paths required here ...
-			}
-            );
+                "Plugins/DungeonCraft_Pro_1/Source/DungeonCraft_Pro_1/Private",
+                "Plugins/DungeonCraft_Pro_1/Source/DungeonCraft_Pro_1/Private/DungeonGraph"
+            }
+        );
 
-
+        // For runtime modules
         PublicDependencyModuleNames.AddRange(
             new string[]
             {
                 "Core",
-                "CoreUObject",  // Moved from private to public - needed for UCLASS/USTRUCT
-				"Engine",       // Moved from private to public - needed for DataAsset
-				// ... add other public dependencies that you statically link with here ...
-			}
-            );
+                "CoreUObject",
+                "Engine"
+            }
+        );
 
-
+        // For editor functionality
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
-				// CoreUObject and Engine moved to public dependencies
-				"Slate",
+                "Slate",
                 "SlateCore",
-                "NavigationSystem", // Added for potential navigation needs
-				"AIModule",         // Added if using AI components
-				// ... add private dependencies that you statically link with here ...	
-			}
-            );
+                "UnrealEd", // Required for UFactory
+                "NavigationSystem",
+                "AIModule"
+            }
+        );
 
-
-        DynamicallyLoadedModuleNames.AddRange(
-            new string[]
-            {
-				// ... add any modules that your module loads dynamically here ...
-			}
-            );
-
-        // Add the API definition for proper symbol export/import
+        // Define API for DLL export/import
         PublicDefinitions.Add("DUNGEONCRAFT_PRO_1_API=DLLEXPORT");
     }
 }
