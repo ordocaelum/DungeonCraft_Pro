@@ -256,6 +256,7 @@ private:
 
     // Guard flag to prevent re-entrant dungeon generation
     bool bIsGenerating = false;
+    bool bAllowClientGenerationFromReplication = false;
 
     // Logs current memory usage to the output log with a contextual label
     void LogMemoryUsage(const FString& Context) const;
