@@ -47,8 +47,14 @@ __pycache__/
 # Temporary plugin outputs
 Plugins/*/Intermediate/
 Plugins/*/Binaries/
+Plugins/PluginsFiles.txt
 
 # Ignore user-specific Unreal project settings (optional)
 *.user
+
+# Visual Studio solution files
+*.sln
+*.vs/
+*.sln.DotSettings*
 
 Content/
