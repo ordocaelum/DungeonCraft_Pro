@@ -1,0 +1,12 @@
+# CODEOWNERS — DungeonCraft Pro
+# These owners are automatically requested for review on pull requests.
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global fallback: all files require review from the project owner
+* @ordocaelum
+
+# Plugin source code
+Plugins/ @ordocaelum
+
+# Documentation
+*.md @ordocaelum

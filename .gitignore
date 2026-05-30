@@ -58,3 +58,11 @@ Plugins/PluginsFiles.txt
 *.sln.DotSettings*
 
 Content/
+
+# CI/CD artifacts
+.github/workflows/*.log
+
+# Documentation build artifacts (if Doxygen or similar is used)
+docs/html/
+docs/latex/
+Doxyfile.log
