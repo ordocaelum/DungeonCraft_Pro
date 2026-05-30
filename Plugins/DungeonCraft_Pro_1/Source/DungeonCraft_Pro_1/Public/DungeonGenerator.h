@@ -254,6 +254,12 @@ private:
     bool HasFloorTileAt(const FVector& Location) const;
     void EnsureWallSpawnPoints();
 
+    // Guard flag to prevent re-entrant dungeon generation
+    bool bIsGenerating = false;
+
+    // Logs current memory usage to the output log with a contextual label
+    void LogMemoryUsage(const FString& Context) const;
+
     // Room theme helpers
     void CalculateRoomGridDimensions(FRoom& Room);
     void SpawnThemedRoom(const FRoom& Room);
@@ -492,6 +498,11 @@ public:
 
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Dungeon Generator", meta = (DisplayName = "Clear Dungeon", Keywords = "dungeon clear delete reset", ButtonName = "Clear Dungeon"))
     void ClearDungeon();
+
+    // Stress test: runs NumCycles full generate-then-destroy cycles and logs timing and memory stats.
+    // Use this to validate memory stability and detect leaks across repeated regenerations.
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Dungeon Generation|Debug")
+    void RunGenerationCycles(int32 NumCycles = 10);
 
 #if WITH_EDITORONLY_DATA
     // Debug visualization settings

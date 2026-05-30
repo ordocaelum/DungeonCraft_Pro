@@ -25,45 +25,32 @@ const FName ADungeonGenerator::DUNGEON_BP_TAG = FName("DungeonBP");
 // Implementation of the ClearDungeon function
 void ADungeonGenerator::ClearDungeon()
 {
-    UE_LOG(LogTemp, Warning, TEXT("Clear Dungeon button pressed - performing thorough cleanup"));
+    UE_LOG(DungeonGenerator, Log, TEXT("ClearDungeon: Beginning thorough cleanup"));
 
     UWorld* World = GetWorld();
     if (!World)
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to get World reference in ClearDungeon"));
+        UE_LOG(DungeonGenerator, Error, TEXT("ClearDungeon: GetWorld() returned null. Cannot perform cleanup."));
         return;
     }
 
-    // ADD THIS DEBUGGING SECTION:
-    UE_LOG(LogTemp, Warning, TEXT("ClearDungeon: Pre-cleanup check for actors with DUNGEON_BP_TAG (%s)"), *DUNGEON_BP_TAG.ToString());
+    // Pre-cleanup diagnostic: scan for any actors carrying the blueprint tag
+    UE_LOG(DungeonGenerator, Log, TEXT("ClearDungeon: Pre-cleanup scan for actors with tag '%s'"), *DUNGEON_BP_TAG.ToString());
     TArray<AActor*> AllActorsInWorld;
-    UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActorsInWorld); // Consider a more specific base class if your BPs derive from one
+    UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActorsInWorld);
     int32 FoundWithTagPreCheck = 0;
     for (AActor* ActorToCheck : AllActorsInWorld)
     {
-        if (ActorToCheck) // Basic null check
+        if (ActorToCheck && ActorToCheck->Tags.Contains(DUNGEON_BP_TAG))
         {
-            // Check if it's potentially one of your BPs - you might need a more specific check here
-            // For now, let's just check tags on all actors that might be relevant
-            if (ActorToCheck->Tags.Contains(DUNGEON_BP_TAG))
-            {
-                UE_LOG(LogTemp, Warning, TEXT("ClearDungeon (Pre-Check): Actor %s HAS the tag %s. Tags: [%s]"),
-                    *ActorToCheck->GetName(),
-                    *DUNGEON_BP_TAG.ToString(),
-                    *FString::JoinBy(ActorToCheck->Tags, TEXT(", "), [](const FName& Tag) { return Tag.ToString(); }));
-                FoundWithTagPreCheck++;
-            }
-            // Optional: If you know part of the name your BPs usually have, you can log those that don't have the tag
-            // else if (ActorToCheck->GetName().Contains(TEXT("ExpectedBPNamePart"))) 
-            // {
-            //     UE_LOG(LogTemp, Warning, TEXT("ClearDungeon (Pre-Check): Actor %s (suspected BP) does NOT have DUNGEON_BP_TAG. Current tags: [%s]"), 
-            //            *ActorToCheck->GetName(), 
-            //            *FString::JoinBy(ActorToCheck->Tags, TEXT(", "), [](const FName& Tag){ return Tag.ToString(); }));
-            // }
+            UE_LOG(DungeonGenerator, Verbose, TEXT("ClearDungeon (Pre-Scan): Actor '%s' has tag '%s'. All tags: [%s]"),
+                *ActorToCheck->GetName(),
+                *DUNGEON_BP_TAG.ToString(),
+                *FString::JoinBy(ActorToCheck->Tags, TEXT(", "), [](const FName& Tag) { return Tag.ToString(); }));
+            FoundWithTagPreCheck++;
         }
     }
-    UE_LOG(LogTemp, Warning, TEXT("ClearDungeon (Pre-Check): Found %d actors with the tag %s via manual iteration."), FoundWithTagPreCheck, *DUNGEON_BP_TAG.ToString());
-    // END OF ADDED DEBUGGING SECTION
+    UE_LOG(DungeonGenerator, Log, TEXT("ClearDungeon (Pre-Scan): Found %d actor(s) with tag '%s'."), FoundWithTagPreCheck, *DUNGEON_BP_TAG.ToString());
 
     // Arrays to store actors we need to destroy
     TArray<AActor*> DungeonMeshes;
@@ -79,18 +66,16 @@ void ADungeonGenerator::ClearDungeon()
     UGameplayStatics::GetAllActorsWithTag(World, PROP_MESH_TAG, PropMeshes);
     UGameplayStatics::GetAllActorsWithTag(World, DUNGEON_BP_TAG, BlueprintActors); // This is the call that's currently finding 0
 
-    // Log statistics (this is your existing log)
-    UE_LOG(LogTemp, Warning, TEXT("Found: %d mesh actors, %d ceiling meshes, %d pillars, %d props, %d blueprint actors (via GetAllActorsWithTag)"),
+    // Log statistics
+    UE_LOG(DungeonGenerator, Log, TEXT("ClearDungeon: Found %d mesh, %d ceiling, %d pillar, %d prop, %d blueprint actor(s) to destroy."),
         DungeonMeshes.Num(), CeilingMeshes.Num(), PillarMeshes.Num(), PropMeshes.Num(), BlueprintActors.Num());
 
-    // Additional blueprint actor discovery if none found by tag
+    // Fallback: discover blueprint actors by name if tag search found nothing
     if (BlueprintActors.Num() == 0)
     {
-        // Get all actors in the world
         TArray<AActor*> AllActors;
         UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActors);
 
-        // Correct way to check for "DungeonBP" in name
         for (AActor* Actor : AllActors)
         {
             if (Actor && Actor->GetName().Contains(TEXT("DungeonBP")))
@@ -99,8 +84,11 @@ void ADungeonGenerator::ClearDungeon()
             }
         }
 
-        UE_LOG(LogTemp, Warning, TEXT("Found %d additional blueprint actors by name search"),
-            BlueprintActors.Num());
+        if (BlueprintActors.Num() > 0)
+        {
+            UE_LOG(DungeonGenerator, Log, TEXT("ClearDungeon: Found %d additional blueprint actor(s) via name search fallback."),
+                BlueprintActors.Num());
+        }
     }
 
     // Destroy all actors
@@ -146,21 +134,22 @@ void ADungeonGenerator::ClearDungeon()
     {
         if (Actor)
         {
-            UE_LOG(LogTemp, Warning, TEXT("Destroying blueprint actor: %s"), *Actor->GetName());
+            UE_LOG(DungeonGenerator, Verbose, TEXT("ClearDungeon: Destroying blueprint actor '%s'."), *Actor->GetName());
             Actor->Destroy();
             TotalDestroyed++;
         }
     }
 
-    // Reset data structures
+    // Reset all data structures including the tile matrix
     GeneratedRooms.Empty();
     CorridorFloorLocations.Empty();
     CorridorWalls.Empty();
     CorridorCorners.Empty();
+    TileMatrix.Empty();
 
-    UE_LOG(LogTemp, Warning, TEXT("Dungeon cleanup complete: Destroyed %d total actors"), TotalDestroyed);
+    UE_LOG(DungeonGenerator, Log, TEXT("ClearDungeon: Complete. Destroyed %d actor(s) and reset all data structures."), TotalDestroyed);
 
-    // Force immediate garbage collection for clean slate
+    // Force immediate garbage collection for a clean slate
     if (GEngine)
     {
         GEngine->ForceGarbageCollection(true);
@@ -209,18 +198,32 @@ void ADungeonGenerator::BeginPlay()
 {
     Super::BeginPlay();
 
-    // Only server should initiate generation if we're in a multiplayer game
+    // Only the server (or standalone) initiates generation in multiplayer
     if (HasAuthority() && bGenerateOnBeginPlay)
     {
+        UE_LOG(DungeonGenerator, Log, TEXT("BeginPlay: Authority BeginPlay triggered. Starting dungeon generation (seed will be replicated to clients)."));
         GenerateDungeon();
+    }
+    else if (!HasAuthority() && bGenerateOnBeginPlay)
+    {
+        // Clients wait for OnRep_DungeonSeed to trigger generation
+        UE_LOG(DungeonGenerator, Log, TEXT("BeginPlay: Client BeginPlay - waiting for replicated DungeonSeed via OnRep_DungeonSeed."));
     }
 }
 
 void ADungeonGenerator::OnRep_DungeonSeed()
 {
-    // When seed is received by clients, they can generate the dungeon
+    // Clients receive the replicated seed and regenerate the dungeon to match the server
     if (!HasAuthority() && bGenerateOnBeginPlay)
     {
+        UE_LOG(DungeonGenerator, Log, TEXT("OnRep_DungeonSeed: Client received seed %d. Triggering client-side dungeon generation."), DungeonSeed);
+
+        if (bIsGenerating)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("OnRep_DungeonSeed: Generation already in progress on this client. Skipping duplicate trigger."));
+            return;
+        }
+
         GenerateDungeon();
     }
 }
@@ -646,6 +649,18 @@ void ADungeonGenerator::ConnectRooms()
 // Helper function to find closest floor tiles between rooms
 FVector ADungeonGenerator::FindClosestFloorTile(const FRoom& FromRoom, const FRoom& ToRoom)
 {
+    if (FromRoom.FloorTileWorldLocations.Num() == 0)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("FindClosestFloorTile: FromRoom has no floor tiles. Returning ZeroVector."));
+        return FVector::ZeroVector;
+    }
+
+    if (ToRoom.FloorTileWorldLocations.Num() == 0)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("FindClosestFloorTile: ToRoom has no floor tiles. Returning first tile of FromRoom."));
+        return FromRoom.FloorTileWorldLocations[0];
+    }
+
     float MinDistance = MAX_flt;
     FVector ClosestTile = FVector::ZeroVector;
 
@@ -668,8 +683,18 @@ FVector ADungeonGenerator::FindClosestFloorTile(const FRoom& FromRoom, const FRo
 // Helper to generate an L-shaped corridor
 void ADungeonGenerator::GenerateCorridor(const FVector& Start, const FVector& End)
 {
-    // First, add the starting tile
-    CorridorFloorLocations.Add(Start);
+    // If start and end are the same (rooms are directly adjacent or share a tile), skip
+    if (FVector::Dist2D(Start, End) < FloorTileSize * 0.5f)
+    {
+        UE_LOG(DungeonGenerator, Verbose, TEXT("GenerateCorridor: Start and End are the same or adjacent (%s). Skipping corridor."), *Start.ToString());
+        return;
+    }
+
+    // Add the starting tile only if it is not already a room or corridor floor tile
+    if (!HasFloorTileAt(Start))
+    {
+        CorridorFloorLocations.Add(Start);
+    }
 
     // Determine if we should go X then Y, or Y then X
     bool bGoXFirst = FMath::RandBool();
@@ -684,7 +709,10 @@ void ADungeonGenerator::GenerateCorridor(const FVector& Start, const FVector& En
         while (FMath::Abs(Current.X - End.X) > FloorTileSize * 0.5f)
         {
             Current.X += StepX;
-            CorridorFloorLocations.Add(Current);
+            if (!HasFloorTileAt(Current))
+            {
+                CorridorFloorLocations.Add(Current);
+            }
         }
 
         // Then move along Y axis
@@ -693,7 +721,10 @@ void ADungeonGenerator::GenerateCorridor(const FVector& Start, const FVector& En
         while (FMath::Abs(Current.Y - End.Y) > FloorTileSize * 0.5f)
         {
             Current.Y += StepY;
-            CorridorFloorLocations.Add(Current);
+            if (!HasFloorTileAt(Current))
+            {
+                CorridorFloorLocations.Add(Current);
+            }
         }
     }
     else
@@ -704,7 +735,10 @@ void ADungeonGenerator::GenerateCorridor(const FVector& Start, const FVector& En
         while (FMath::Abs(Current.Y - End.Y) > FloorTileSize * 0.5f)
         {
             Current.Y += StepY;
-            CorridorFloorLocations.Add(Current);
+            if (!HasFloorTileAt(Current))
+            {
+                CorridorFloorLocations.Add(Current);
+            }
         }
 
         // Then move along X axis
@@ -713,7 +747,10 @@ void ADungeonGenerator::GenerateCorridor(const FVector& Start, const FVector& En
         while (FMath::Abs(Current.X - End.X) > FloorTileSize * 0.5f)
         {
             Current.X += StepX;
-            CorridorFloorLocations.Add(Current);
+            if (!HasFloorTileAt(Current))
+            {
+                CorridorFloorLocations.Add(Current);
+            }
         }
     }
 }
@@ -974,7 +1011,9 @@ void ADungeonGenerator::SpawnBlueprintActors(const TArray<FVector>& FloorLocatio
         return;
     }
 
+    const double StartTime = FPlatformTime::Seconds();
     int32 SpawnedCount = 0;
+    int32 FailedCount = 0;
 
     // Try to spawn blueprints at each floor location
     for (const FVector& FloorPos : FloorLocations) // Loop for FloorPos
@@ -1026,6 +1065,7 @@ void ADungeonGenerator::SpawnBlueprintActors(const TArray<FVector>& FloorLocatio
                     UE_LOG(DungeonGenerator, Error, TEXT("SpawnBlueprintActors: SpawnActor returned null for BlueprintClass '%s' at location %s."),
                         *BPParams.BlueprintClass->GetName(),
                         *SpawnLocation.ToString());
+                    FailedCount++;
                 }
             }
             else if (!BPParams.BlueprintClass)
@@ -1034,7 +1074,10 @@ void ADungeonGenerator::SpawnBlueprintActors(const TArray<FVector>& FloorLocatio
             }
         }
     }
-    UE_LOG(DungeonGenerator, Log, TEXT("SpawnBlueprintActors: Spawned %d blueprint actor(s) across %d location(s)."), SpawnedCount, FloorLocations.Num());
+
+    const double ElapsedMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
+    UE_LOG(DungeonGenerator, Log, TEXT("SpawnBlueprintActors: Spawned %d, failed %d across %d location(s) in %.2f ms."),
+        SpawnedCount, FailedCount, FloorLocations.Num(), ElapsedMs);
 }
 
 void ADungeonGenerator::SpawnStaticMeshes(const TArray<FVector>& FloorLocations, bool bIsRoom)
@@ -1049,7 +1092,9 @@ void ADungeonGenerator::SpawnStaticMeshes(const TArray<FVector>& FloorLocations,
         return;
     }
 
-    int32 SpawnedMeshes = 0; // Add counter for logging
+    const double StartTime = FPlatformTime::Seconds();
+    int32 SpawnedMeshes = 0;
+    int32 FailedMeshes = 0;
 
     for (const FVector& FloorPos : FloorLocations)
     {
@@ -1089,12 +1134,15 @@ void ADungeonGenerator::SpawnStaticMeshes(const TArray<FVector>& FloorLocations,
                 else
                 {
                     UE_LOG(DungeonGenerator, Error, TEXT("SpawnStaticMeshes: SpawnDungeonMesh returned null for mesh '%s' at location %s."), *MeshParams.StaticMesh->GetName(), *SpawnLocation.ToString());
+                    FailedMeshes++;
                 }
             }
         }
     }
 
-    UE_LOG(DungeonGenerator, Log, TEXT("Spawned %d static meshes"), SpawnedMeshes);
+    const double ElapsedMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
+    UE_LOG(DungeonGenerator, Log, TEXT("SpawnStaticMeshes: Spawned %d, failed %d across %d location(s) in %.2f ms."),
+        SpawnedMeshes, FailedMeshes, FloorLocations.Num(), ElapsedMs);
 }
 
 AStaticMeshActor* ADungeonGenerator::SpawnDungeonMesh(const FTransform& InTransform, UStaticMesh* SMToSpawn, UMaterialInterface* OverrideMaterial)
@@ -1200,7 +1248,7 @@ void ADungeonGenerator::DestroyDungeonMeshes()
     {
         if (Actor)
         {
-            UE_LOG(LogTemp, Warning, TEXT("Destroying blueprint actor: %s"), *Actor->GetName());
+            UE_LOG(DungeonGenerator, Verbose, TEXT("DestroyDungeonMeshes: Destroying blueprint actor '%s'."), *Actor->GetName());
             Actor->Destroy();
             TotalDestroyed++;
         }
@@ -1208,11 +1256,12 @@ void ADungeonGenerator::DestroyDungeonMeshes()
 
     UE_LOG(DungeonGenerator, Log, TEXT("DestroyDungeonMeshes: Destroyed %d total actor(s)."), TotalDestroyed);
 
-    // Make sure to reset data structures too
+    // Reset all data structures including the tile matrix
     GeneratedRooms.Empty();
     CorridorFloorLocations.Empty();
     CorridorWalls.Empty();
     CorridorCorners.Empty();
+    TileMatrix.Empty();
 }
 
 void ADungeonGenerator::ApplyConfigFromDataAsset()
@@ -1959,6 +2008,13 @@ bool ADungeonGenerator::ValidateConfig()
 
 void ADungeonGenerator::GenerateDungeon()
 {
+    // Guard against re-entrant calls (e.g. from both BeginPlay and OnRep_DungeonSeed firing simultaneously)
+    if (bIsGenerating)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("GenerateDungeon: Already in progress. Ignoring re-entrant call."));
+        return;
+    }
+
     if (bUseConfigDataAsset && DungeonConfig)
     {
         ApplyConfigFromDataAsset();
@@ -1982,6 +2038,11 @@ void ADungeonGenerator::GenerateDungeon()
         return;
     }
 
+    bIsGenerating = true;
+    const double GenerationStartTime = FPlatformTime::Seconds();
+
+    LogMemoryUsage(TEXT("Before Generation"));
+
     // FIRST CALL: Clean up the old dungeon
     DestroyDungeonMeshes();
 
@@ -1995,7 +2056,7 @@ void ADungeonGenerator::GenerateDungeon()
         DungeonSeed = FMath::Rand();
     }
 
-    UE_LOG(DungeonGenerator, Log, TEXT("Generating dungeon with seed: %d"), DungeonSeed);
+    UE_LOG(DungeonGenerator, Log, TEXT("GenerateDungeon: Starting with seed=%d, TileMap=%dx%d, Rooms=%d"), DungeonSeed, TileMapRows, TileMapColumns, RoomsToGenerate);
 
     // Initialize the tile matrix
     InitTileMatrix();
@@ -2007,6 +2068,7 @@ void ADungeonGenerator::GenerateDungeon()
     {
         UE_LOG(DungeonGenerator, Error, TEXT("GenerateDungeon: No rooms were generated (seed=%d, TileMap=%dx%d, RoomsToGenerate=%d). Aborting dungeon generation."),
             DungeonSeed, TileMapRows, TileMapColumns, RoomsToGenerate);
+        bIsGenerating = false;
         return;
     }
 
@@ -2049,6 +2111,79 @@ void ADungeonGenerator::GenerateDungeon()
         // Spawn generic dungeon
         SpawnGenericDungeon(AllFloorLocations, AllWallPoints);
     }
+
+    const double GenerationEndTime = FPlatformTime::Seconds();
+    const double ElapsedMs = (GenerationEndTime - GenerationStartTime) * 1000.0;
+    UE_LOG(DungeonGenerator, Log, TEXT("GenerateDungeon: Complete in %.2f ms (seed=%d, rooms=%d, corridorTiles=%d)."),
+        ElapsedMs, DungeonSeed, GeneratedRooms.Num(), CorridorFloorLocations.Num());
+
+    LogMemoryUsage(TEXT("After Generation"));
+
+    bIsGenerating = false;
+}
+
+void ADungeonGenerator::LogMemoryUsage(const FString& Context) const
+{
+    FPlatformMemoryStats MemStats = FPlatformMemory::GetStats();
+    UE_LOG(DungeonGenerator, Log,
+        TEXT("MemoryUsage [%s]: Used=%.2f MB, Peak=%.2f MB, Rooms=%d, CorridorTiles=%d, TileMatrix=%dx%d"),
+        *Context,
+        static_cast<float>(MemStats.UsedPhysical) / (1024.f * 1024.f),
+        static_cast<float>(MemStats.PeakUsedPhysical) / (1024.f * 1024.f),
+        GeneratedRooms.Num(),
+        CorridorFloorLocations.Num(),
+        TileMatrix.Num(),
+        TileMatrix.Num() > 0 ? TileMatrix[0].Num() : 0
+    );
+}
+
+void ADungeonGenerator::RunGenerationCycles(int32 NumCycles)
+{
+    if (NumCycles <= 0)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("RunGenerationCycles: NumCycles must be > 0. Got %d."), NumCycles);
+        return;
+    }
+
+    UE_LOG(DungeonGenerator, Log, TEXT("RunGenerationCycles: Starting %d generation cycle(s). Seed=%d, Rooms=%d, TileMap=%dx%d"),
+        NumCycles, DungeonSeed, RoomsToGenerate, TileMapRows, TileMapColumns);
+
+    LogMemoryUsage(TEXT("Before Cycles"));
+
+    const double TotalStartTime = FPlatformTime::Seconds();
+    double MinCycleMs = MAX_dbl;
+    double MaxCycleMs = 0.0;
+    double TotalCycleMs = 0.0;
+    int32 SuccessfulCycles = 0;
+
+    for (int32 Cycle = 0; Cycle < NumCycles; Cycle++)
+    {
+        const double CycleStart = FPlatformTime::Seconds();
+
+        // Each cycle generates then destroys the dungeon
+        GenerateDungeon();
+        DestroyDungeonMeshes();
+
+        const double CycleElapsed = (FPlatformTime::Seconds() - CycleStart) * 1000.0;
+        TotalCycleMs += CycleElapsed;
+        MinCycleMs = FMath::Min(MinCycleMs, CycleElapsed);
+        MaxCycleMs = FMath::Max(MaxCycleMs, CycleElapsed);
+        SuccessfulCycles++;
+
+        UE_LOG(DungeonGenerator, Log, TEXT("RunGenerationCycles: Cycle %d/%d complete in %.2f ms."), Cycle + 1, NumCycles, CycleElapsed);
+
+        // Log memory after each cycle to track for leaks
+        LogMemoryUsage(FString::Printf(TEXT("After Cycle %d"), Cycle + 1));
+    }
+
+    const double TotalElapsed = (FPlatformTime::Seconds() - TotalStartTime) * 1000.0;
+    const double AvgCycleMs = SuccessfulCycles > 0 ? (TotalCycleMs / SuccessfulCycles) : 0.0;
+
+    UE_LOG(DungeonGenerator, Log,
+        TEXT("RunGenerationCycles: %d/%d cycles complete. Total=%.2f ms, Avg=%.2f ms, Min=%.2f ms, Max=%.2f ms."),
+        SuccessfulCycles, NumCycles, TotalElapsed, AvgCycleMs, MinCycleMs, MaxCycleMs);
+
+    LogMemoryUsage(TEXT("After All Cycles"));
 }
 
 void ADungeonGenerator::SetNewRoomSize(int32 NewMinRoomSize, int32 NewMaxRoomSize)
