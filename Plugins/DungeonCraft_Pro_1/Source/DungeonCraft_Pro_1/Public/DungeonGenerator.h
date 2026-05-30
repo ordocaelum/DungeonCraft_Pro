@@ -243,6 +243,10 @@ class DUNGEONCRAFT_PRO_1_API ADungeonGenerator : public AActor
 private:
     void ApplyConfigFromDataAsset();
 
+    // Validates all generator config values. Returns true if config is valid and generation may proceed.
+    // Logs errors for critical issues (blocks generation) and warnings for auto-corrected values.
+    bool ValidateConfig();
+
     bool WallExistsAnywhere(const FVector& WallPos, bool bFacingX) const;
 
     void AddWallsAroundTile(const FVector& FloorPos, TArray<FWallSpawnPoint>& OutWalls);
