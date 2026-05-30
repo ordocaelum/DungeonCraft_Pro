@@ -1020,10 +1020,9 @@ void ADungeonGenerator::SpawnBlueprintActors(const TArray<FVector>& FloorLocatio
                         *SpawnLocation.ToString());
                 }
             }
-            else if (!BPParams.BlueprintClass && FMath::FRand() <= BPParams.SpawnChance) // Check if BPClass itself was null
+            else if (!BPParams.BlueprintClass)
             {
-                // Corrected Logging Here:
-                UE_LOG(LogTemp, Error, TEXT("SpawnBlueprintActors: Attempted to spawn but BlueprintClass was null for an entry in BlueprintActorsToSpawn. SpawnChance met."));
+                UE_LOG(DungeonGenerator, Error, TEXT("SpawnBlueprintActors: BlueprintClass is null for an entry in BlueprintActorsToSpawn. Skipping spawn."));
             }
         }
     }
@@ -1035,6 +1034,13 @@ void ADungeonGenerator::SpawnStaticMeshes(const TArray<FVector>& FloorLocations,
     if (StaticMeshesToSpawn.Num() == 0)
         return;
 
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("SpawnStaticMeshes: World is null. Cannot spawn static meshes."));
+        return;
+    }
+
     int32 SpawnedMeshes = 0; // Add counter for logging
 
     for (const FVector& FloorPos : FloorLocations)
@@ -1045,7 +1051,13 @@ void ADungeonGenerator::SpawnStaticMeshes(const TArray<FVector>& FloorLocations,
             if (MeshParams.bOnlySpawnInRooms && !bIsRoom)
                 continue;
 
-            if (FMath::FRand() <= MeshParams.SpawnChance && MeshParams.StaticMesh)
+            if (!MeshParams.StaticMesh)
+            {
+                UE_LOG(DungeonGenerator, Error, TEXT("SpawnStaticMeshes: StaticMesh is null for an entry in StaticMeshesToSpawn. Skipping spawn."));
+                continue;
+            }
+
+            if (FMath::FRand() <= MeshParams.SpawnChance)
             {
                 // Create a random offset between min and max values
                 FVector RandomOffset;
@@ -1086,7 +1098,14 @@ AStaticMeshActor* ADungeonGenerator::SpawnDungeonMesh(const FTransform& InTransf
     ActorSpawnParams.Instigator = GetInstigator();
     ActorSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-    AStaticMeshActor* SMActor = GetWorld()->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), InTransform, ActorSpawnParams);
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("SpawnDungeonMesh: World is null. Cannot spawn mesh."));
+        return nullptr;
+    }
+
+    AStaticMeshActor* SMActor = World->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), InTransform, ActorSpawnParams);
     if (SMActor)
     {
         // Set mobility to static for better performance, but can be changed for interactive elements
