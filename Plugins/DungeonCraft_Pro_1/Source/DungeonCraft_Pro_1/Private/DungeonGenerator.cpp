@@ -224,7 +224,9 @@ void ADungeonGenerator::OnRep_DungeonSeed()
             return;
         }
 
+        bAllowClientGenerationFromReplication = true;
         GenerateDungeon();
+        bAllowClientGenerationFromReplication = false;
     }
 }
 
@@ -385,17 +387,7 @@ void ADungeonGenerator::GenerateRooms()
 
     UE_LOG(DungeonGenerator, Log, TEXT("Generated %d rooms"), GeneratedRooms.Num());
 
-    // After rooms are generated, assign themes
-
-    // First, calculate total weight of all themes
-    float TotalWeight = DefaultThemeWeight; // Weight for default theme
-    for (URoomThemeDataAsset* Theme : RoomThemes)
-    {
-        if (Theme)
-        {
-            TotalWeight += Theme->SelectionWeight;
-        }
-    }
+    // After rooms are generated, assign themes using weighted random selection.
 
     // Create array of room indices to randomize special room selection
     TArray<int32> RoomIndices;
@@ -412,31 +404,68 @@ void ADungeonGenerator::GenerateRooms()
     }
 
     // Calculate how many special rooms to create (limited by MaxSpecialRooms)
-    int32 ValidThemes = 0;
+    TArray<URoomThemeDataAsset*> ValidThemes;
+    float TotalThemeWeight = 0.0f;
     for (URoomThemeDataAsset* Theme : RoomThemes)
     {
-        if (Theme) ValidThemes++;
-    }
-    int32 SpecialRoomsToCreate = FMath::Min(MaxSpecialRooms, FMath::Min(ValidThemes, GeneratedRooms.Num()));
+        if (!Theme)
+        {
+            continue;
+        }
 
-    // Assign themes to first N rooms in our shuffled list
-    int32 ValidThemeIndex = 0;
+        const float Weight = FMath::Max(0.0f, Theme->SelectionWeight);
+        if (Weight <= 0.0f)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("GenerateRooms: Theme '%s' has non-positive SelectionWeight (%.2f). It will not be selected."),
+                *Theme->GetName(), Theme->SelectionWeight);
+            continue;
+        }
+
+        ValidThemes.Add(Theme);
+        TotalThemeWeight += Weight;
+    }
+
+    const int32 SpecialRoomsToCreate = FMath::Min(MaxSpecialRooms, FMath::Min(ValidThemes.Num(), GeneratedRooms.Num()));
+
+    // Assign themes to first N rooms in our shuffled list using selection weights.
     for (int32 i = 0; i < SpecialRoomsToCreate; i++)
     {
-        int32 RoomIdx = RoomIndices[i];
-
-        // Find next valid theme
-        while (ValidThemeIndex < RoomThemes.Num() && !RoomThemes[ValidThemeIndex])
+        if (!RoomIndices.IsValidIndex(i))
         {
-            ValidThemeIndex++;
+            continue;
         }
 
-        // Assign theme if valid
-        if (ValidThemeIndex < RoomThemes.Num())
+        const int32 RoomIdx = RoomIndices[i];
+        if (!GeneratedRooms.IsValidIndex(RoomIdx))
         {
-            GeneratedRooms[RoomIdx].RoomTheme = RoomThemes[ValidThemeIndex];
-            ValidThemeIndex++;
+            continue;
         }
+
+        if (TotalThemeWeight <= 0.0f || ValidThemes.Num() == 0)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("GenerateRooms: No selectable themes available. Remaining rooms will use default assets."));
+            break;
+        }
+
+        float Roll = FMath::FRandRange(0.0f, TotalThemeWeight);
+        URoomThemeDataAsset* SelectedTheme = nullptr;
+        for (URoomThemeDataAsset* Theme : ValidThemes)
+        {
+            Roll -= FMath::Max(0.0f, Theme->SelectionWeight);
+            if (Roll <= 0.0f)
+            {
+                SelectedTheme = Theme;
+                break;
+            }
+        }
+
+        if (!SelectedTheme)
+        {
+            SelectedTheme = ValidThemes.Last();
+        }
+
+        GeneratedRooms[RoomIdx].RoomTheme = SelectedTheme;
+        UE_LOG(DungeonGenerator, Verbose, TEXT("GenerateRooms: Assigned theme '%s' to room index %d."), *SelectedTheme->GetName(), RoomIdx);
 
         // Calculate room grid dimensions for organized prop placement
         CalculateRoomGridDimensions(GeneratedRooms[RoomIdx]);
@@ -1316,45 +1345,86 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
 
     UE_LOG(DungeonGenerator, Log, TEXT("SpawnThemedRoom: Spawning themed room with theme '%s' for %d floor tile(s)."), *Theme->GetName(), Room.FloorTileWorldLocations.Num());
 
+    const double StartTime = FPlatformTime::Seconds();
+    int32 SpawnedThemedMeshes = 0;
+    int32 SpawnedThemedBlueprints = 0;
+
+    UStaticMesh* EffectiveFloorMesh = Theme->FloorMesh ? Theme->FloorMesh : FloorSM;
+    UStaticMesh* EffectiveWallMesh = Theme->WallMesh ? Theme->WallMesh : WallSM;
+    UStaticMesh* EffectiveCeilingMesh = Theme->CeilingMesh ? Theme->CeilingMesh : CeilingSM;
+
+    if (!Theme->FloorMesh && FloorSM)
+    {
+        UE_LOG(DungeonGenerator, Verbose, TEXT("SpawnThemedRoom: Theme '%s' has no FloorMesh, using default FloorSM."), *Theme->GetName());
+    }
+    if (!Theme->WallMesh && WallSM)
+    {
+        UE_LOG(DungeonGenerator, Verbose, TEXT("SpawnThemedRoom: Theme '%s' has no WallMesh, using default WallSM."), *Theme->GetName());
+    }
+    if (!Theme->CeilingMesh && CeilingSM)
+    {
+        UE_LOG(DungeonGenerator, Verbose, TEXT("SpawnThemedRoom: Theme '%s' has no CeilingMesh, using default CeilingSM."), *Theme->GetName());
+    }
+
     // Spawn floor tiles using theme floor mesh
     for (const FVector& FloorPos : Room.FloorTileWorldLocations)
     {
-        SpawnDungeonMesh(
-            FTransform(FRotator::ZeroRotator, FloorPos + Theme->FloorPivotOffset),
-            Theme->FloorMesh ? Theme->FloorMesh : FloorSM, // Fallback to default if theme mesh is null
-            Theme->FloorMaterialOverride
-        );
-
-        // Spawn ceiling if available in the theme
-        if (Theme->CeilingMesh)
+        if (EffectiveFloorMesh)
         {
-            FVector CeilingPos = FloorPos + Theme->CeilingPivotOffset;
+            SpawnDungeonMesh(
+                FTransform(FRotator::ZeroRotator, FloorPos + Theme->FloorPivotOffset),
+                EffectiveFloorMesh,
+                Theme->FloorMaterialOverride
+            );
+            SpawnedThemedMeshes++;
+        }
+        else
+        {
+            UE_LOG(DungeonGenerator, Error, TEXT("SpawnThemedRoom: Theme '%s' has no FloorMesh and default FloorSM is null. Floor tile at %s cannot be spawned."),
+                *Theme->GetName(), *FloorPos.ToString());
+        }
+
+        // Spawn ceiling if available in theme or default generator settings
+        if (EffectiveCeilingMesh)
+        {
+            const FVector CeilingOffset = Theme->CeilingMesh ? Theme->CeilingPivotOffset : CeilingPivotOffset;
+            FVector CeilingPos = FloorPos + CeilingOffset;
             SpawnDungeonMesh(
                 FTransform(FRotator::ZeroRotator, CeilingPos),
-                Theme->CeilingMesh,
+                EffectiveCeilingMesh,
                 Theme->CeilingMaterialOverride
             );
+            SpawnedThemedMeshes++;
         }
-        // Optional: consider if a default ceiling (CeilingSM) should be spawned if Theme->CeilingMesh is null but CeilingSM is valid
     }
 
     // Spawn walls using theme wall mesh
     for (const FWallSpawnPoint& Wall : Room.WallSpawnPoints)
     {
+        if (!EffectiveWallMesh)
+        {
+            UE_LOG(DungeonGenerator, Error, TEXT("SpawnThemedRoom: Theme '%s' has no WallMesh and default WallSM is null. Wall at %s cannot be spawned."),
+                *Theme->GetName(), *Wall.WorldLocation.ToString());
+            continue;
+        }
+
+        const bool bEffectiveWallFacingX = Theme->WallMesh ? Theme->bWallFacingX : bWallFacingX;
+        const FVector EffectiveWallPivotOffset = Theme->WallMesh ? Theme->WallPivotOffset : WallSMPivotOffset;
         FVector WallModifiedOffset = FVector::ZeroVector;
         FRotator WallRotation = CalculateWallRotation(
-            Theme->bWallFacingX,
+            bEffectiveWallFacingX,
             Wall,
-            Theme->WallPivotOffset,
+            EffectiveWallPivotOffset,
             WallModifiedOffset
         );
 
         FVector WallSpawnPoint = Wall.WorldLocation + WallModifiedOffset;
         SpawnDungeonMesh(
             FTransform(WallRotation, WallSpawnPoint),
-            Theme->WallMesh ? Theme->WallMesh : WallSM, // Fallback to default if theme mesh is null
+            EffectiveWallMesh,
             Theme->WallMaterialOverride
         );
+        SpawnedThemedMeshes++;
     }
 
     // Spawn grid-based meshes (e.g., pits in a specific pattern)
@@ -1413,10 +1483,10 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
         {
             if (!MeshParams.StaticMesh)
             {
-                // UE_LOG(LogTemp, Warning, TEXT("SpawnThemedRoom: A ThemeSpecificMesh entry has a null StaticMesh. Skipping.")); // Optional: log this if needed
+                UE_LOG(DungeonGenerator, Warning, TEXT("SpawnThemedRoom: A ThemeSpecificMesh entry has a null StaticMesh. Skipping."));
                 continue;
             }
-            if (FMath::FRand() <= MeshParams.SpawnChance)
+            if (FMath::FRand() <= FMath::Clamp(MeshParams.SpawnChance, 0.0f, 1.0f))
             {
                 FVector RandomOffset;
                 RandomOffset.X = FMath::RandRange(MeshParams.LocationOffsetMin.X, MeshParams.LocationOffsetMax.X);
@@ -1429,6 +1499,7 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
                     MeshParams.StaticMesh,
                     MeshParams.MaterialOverride
                 );
+                SpawnedThemedMeshes++;
             }
         }
     }
@@ -1442,7 +1513,7 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
             for (const FBlueprintSpawnParams& BPParams : Theme->ThemeSpecificBlueprints)
             {
                 // Check spawn chance first
-                if (FMath::FRand() <= BPParams.SpawnChance)
+                if (FMath::FRand() <= FMath::Clamp(BPParams.SpawnChance, 0.0f, 1.0f))
                 {
                     // Then check if BlueprintClass is valid
                     if (BPParams.BlueprintClass)
@@ -1467,6 +1538,7 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
                         {
                             NewActor->SetActorScale3D(BPParams.Scale);
                             NewActor->Tags.AddUnique(DUNGEON_BP_TAG);
+                            SpawnedThemedBlueprints++;
 
                             if (!NewActor->Tags.Contains(DUNGEON_BP_TAG))
                             {
@@ -1498,6 +1570,12 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
     {
         UE_LOG(DungeonGenerator, Error, TEXT("SpawnThemedRoom: GetWorld() returned null. Cannot spawn theme-specific blueprints for theme '%s'."), *Theme->GetName());
     }
+
+    SpawnFloorDecals(Room.FloorTileWorldLocations, true);
+
+    const double ElapsedMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
+    UE_LOG(DungeonGenerator, Log, TEXT("SpawnThemedRoom: Theme '%s' complete. Spawned %d mesh actors and %d blueprint actors in %.2f ms."),
+        *Theme->GetName(), SpawnedThemedMeshes, SpawnedThemedBlueprints, ElapsedMs);
 }
 
 void ADungeonGenerator::SpawnDungeonFromDataTable()
@@ -1864,6 +1942,11 @@ void ADungeonGenerator::SpawnGenericDungeon(const TArray<FVector>& FloorTileLoca
 
 bool ADungeonGenerator::ValidateConfig()
 {
+    static constexpr int32 MaxRecommendedTileDimension = 10000;
+    static constexpr int64 MaxSafeTileCells = 25000000; // Keep tile matrix allocation within safer runtime bounds.
+    static constexpr int32 MaxRecommendedRooms = 1000;
+    static constexpr int32 MaxRecommendedAttemptsPerRoom = 100000;
+
     bool bIsValid = true;
 
     // --- Tile map dimensions ---
@@ -1876,6 +1959,21 @@ bool ADungeonGenerator::ValidateConfig()
     if (TileMapColumns < 10)
     {
         UE_LOG(DungeonGenerator, Error, TEXT("ValidateConfig: TileMapColumns (%d) must be at least 10. Generation blocked."), TileMapColumns);
+        bIsValid = false;
+    }
+
+    if (TileMapRows > MaxRecommendedTileDimension || TileMapColumns > MaxRecommendedTileDimension)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("ValidateConfig: TileMap size %dx%d exceeds supported hard limit of %d per dimension. Generation blocked."),
+            TileMapRows, TileMapColumns, MaxRecommendedTileDimension);
+        bIsValid = false;
+    }
+
+    const int64 TileCellCount = static_cast<int64>(TileMapRows) * static_cast<int64>(TileMapColumns);
+    if (TileCellCount > MaxSafeTileCells)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("ValidateConfig: TileMap size %dx%d (%lld cells) exceeds safe memory limit of %lld cells. Generation blocked."),
+            TileMapRows, TileMapColumns, TileCellCount, MaxSafeTileCells);
         bIsValid = false;
     }
 
@@ -1909,6 +2007,27 @@ bool ADungeonGenerator::ValidateConfig()
     {
         UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: RoomsToGenerate (%d) is below minimum of 1. Clamping to 1."), RoomsToGenerate);
         RoomsToGenerate = 1;
+    }
+
+    if (RoomsToGenerate > MaxRecommendedRooms)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: RoomsToGenerate (%d) exceeds recommended limit (%d). Clamping to %d."),
+            RoomsToGenerate, MaxRecommendedRooms, MaxRecommendedRooms);
+        RoomsToGenerate = MaxRecommendedRooms;
+    }
+
+    if (MaxRandomAttemptsPerRoom < 1)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: MaxRandomAttemptsPerRoom (%d) must be at least 1. Clamping to 1."),
+            MaxRandomAttemptsPerRoom);
+        MaxRandomAttemptsPerRoom = 1;
+    }
+
+    if (MaxRandomAttemptsPerRoom > MaxRecommendedAttemptsPerRoom)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: MaxRandomAttemptsPerRoom (%d) exceeds recommended limit (%d). Clamping to %d."),
+            MaxRandomAttemptsPerRoom, MaxRecommendedAttemptsPerRoom, MaxRecommendedAttemptsPerRoom);
+        MaxRandomAttemptsPerRoom = MaxRecommendedAttemptsPerRoom;
     }
 
     // --- Floor tile size ---
@@ -2003,6 +2122,96 @@ bool ADungeonGenerator::ValidateConfig()
         PillarSettings.SpawnChance = FMath::Clamp(PillarSettings.SpawnChance, 0.0f, 1.0f);
     }
 
+    // --- Theme system validation ---
+    if (DefaultThemeWeight < 0.0f)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: DefaultThemeWeight (%.2f) cannot be negative. Clamping to 0.0."), DefaultThemeWeight);
+        DefaultThemeWeight = 0.0f;
+    }
+
+    if (MaxSpecialRooms < 0)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: MaxSpecialRooms (%d) cannot be negative. Clamping to 0."), MaxSpecialRooms);
+        MaxSpecialRooms = 0;
+    }
+    if (MaxSpecialRooms > RoomsToGenerate)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: MaxSpecialRooms (%d) exceeds RoomsToGenerate (%d). Clamping to %d."),
+            MaxSpecialRooms, RoomsToGenerate, RoomsToGenerate);
+        MaxSpecialRooms = RoomsToGenerate;
+    }
+
+    for (int32 ThemeIndex = 0; ThemeIndex < RoomThemes.Num(); ThemeIndex++)
+    {
+        URoomThemeDataAsset* Theme = RoomThemes[ThemeIndex];
+        if (!Theme)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: RoomThemes[%d] is null and will be ignored."), ThemeIndex);
+            continue;
+        }
+
+        if (Theme->SelectionWeight < 0.0f)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: Theme '%s' SelectionWeight (%.2f) is negative. Clamping to 0.0."),
+                *Theme->GetName(), Theme->SelectionWeight);
+            Theme->SelectionWeight = 0.0f;
+        }
+
+        for (int32 MeshIndex = 0; MeshIndex < Theme->ThemeSpecificMeshes.Num(); MeshIndex++)
+        {
+            FStaticMeshSpawnParams& Params = Theme->ThemeSpecificMeshes[MeshIndex];
+            if (Params.SpawnChance < 0.0f || Params.SpawnChance > 1.0f)
+            {
+                UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: Theme '%s' ThemeSpecificMeshes[%d] SpawnChance (%.2f) is outside [0,1]. Clamping."),
+                    *Theme->GetName(), MeshIndex, Params.SpawnChance);
+                Params.SpawnChance = FMath::Clamp(Params.SpawnChance, 0.0f, 1.0f);
+            }
+
+            for (int32 Axis = 0; Axis < 3; Axis++)
+            {
+                if (Params.LocationOffsetMin[Axis] > Params.LocationOffsetMax[Axis])
+                {
+                    UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: Theme '%s' ThemeSpecificMeshes[%d] has min offset > max offset on axis %d. Swapping."),
+                        *Theme->GetName(), MeshIndex, Axis);
+                    Swap(Params.LocationOffsetMin[Axis], Params.LocationOffsetMax[Axis]);
+                }
+            }
+        }
+
+        for (int32 BPIndex = 0; BPIndex < Theme->ThemeSpecificBlueprints.Num(); BPIndex++)
+        {
+            FBlueprintSpawnParams& Params = Theme->ThemeSpecificBlueprints[BPIndex];
+            if (Params.SpawnChance < 0.0f || Params.SpawnChance > 1.0f)
+            {
+                UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: Theme '%s' ThemeSpecificBlueprints[%d] SpawnChance (%.2f) is outside [0,1]. Clamping."),
+                    *Theme->GetName(), BPIndex, Params.SpawnChance);
+                Params.SpawnChance = FMath::Clamp(Params.SpawnChance, 0.0f, 1.0f);
+            }
+
+            for (int32 Axis = 0; Axis < 3; Axis++)
+            {
+                if (Params.LocationOffsetMin[Axis] > Params.LocationOffsetMax[Axis])
+                {
+                    UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: Theme '%s' ThemeSpecificBlueprints[%d] has min offset > max offset on axis %d. Swapping."),
+                        *Theme->GetName(), BPIndex, Axis);
+                    Swap(Params.LocationOffsetMin[Axis], Params.LocationOffsetMax[Axis]);
+                }
+            }
+        }
+
+        for (int32 GridIndex = 0; GridIndex < Theme->GridPlacedMeshes.Num(); GridIndex++)
+        {
+            FGridPlacement& GridParams = Theme->GridPlacedMeshes[GridIndex];
+            if (GridParams.GridWidth <= 0)
+            {
+                UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: Theme '%s' GridPlacedMeshes[%d] has GridWidth <= 0. Clamping to 1."),
+                    *Theme->GetName(), GridIndex);
+                GridParams.GridWidth = 1;
+            }
+            GridParams.UpdateGridHeight();
+        }
+    }
+
     return bIsValid;
 }
 
@@ -2032,10 +2241,14 @@ void ADungeonGenerator::GenerateDungeon()
     }
 
     // Check execution authority in multiplayer (but allow editor generation)
-    if (GetNetMode() != NM_Standalone && !HasAuthority() && !GIsEditor)
+    if (GetNetMode() != NM_Standalone && !HasAuthority() && !GIsEditor && !bAllowClientGenerationFromReplication)
     {
         UE_LOG(DungeonGenerator, Warning, TEXT("GenerateDungeon called on client. Only the server should generate dungeons in multiplayer."));
         return;
+    }
+    if (GetNetMode() != NM_Standalone && !HasAuthority() && bAllowClientGenerationFromReplication)
+    {
+        UE_LOG(DungeonGenerator, Log, TEXT("GenerateDungeon: Client-side generation authorized from replicated seed %d."), DungeonSeed);
     }
 
     bIsGenerating = true;
