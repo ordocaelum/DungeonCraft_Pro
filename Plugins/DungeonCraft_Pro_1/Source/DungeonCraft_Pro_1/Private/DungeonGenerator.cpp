@@ -878,6 +878,7 @@ void ADungeonGenerator::SpawnCeilingMeshes(const TArray<FVector>& FloorLocations
     // Skip if no ceiling mesh is assigned
     if (!CeilingSM)
     {
+        UE_LOG(DungeonGenerator, Warning, TEXT("SpawnCeilingMeshes: CeilingSM is null. Skipping ceiling spawn for %d location(s)."), FloorLocations.Num());
         return;
     }
 
@@ -902,6 +903,15 @@ void ADungeonGenerator::SpawnFloorDecals(const TArray<FVector>& FloorLocations, 
     if (FloorDecalsToSpawn.Num() == 0)
     {
         return;
+    }
+
+    // Validate decal entries once before spawning to avoid per-tile log spam
+    for (int32 i = 0; i < FloorDecalsToSpawn.Num(); i++)
+    {
+        if (!FloorDecalsToSpawn[i].DecalMaterial)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("SpawnFloorDecals: FloorDecalsToSpawn[%d] has a null DecalMaterial. That entry will be skipped at every floor location."), i);
+        }
     }
 
     // Attempt to spawn decals on floor tiles
@@ -939,6 +949,10 @@ void ADungeonGenerator::SpawnFloorDecals(const TArray<FVector>& FloorLocations, 
                     DecalComponent->DecalSize = DecalParams.DecalSize;
                     DecalComponent->SetVisibility(true);
                 }
+                else
+                {
+                    UE_LOG(DungeonGenerator, Error, TEXT("SpawnFloorDecals: NewObject<UDecalComponent> returned null at location %s."), *FloorPos.ToString());
+                }
 
                 // Only spawn one decal per location
                 break;
@@ -955,7 +969,10 @@ void ADungeonGenerator::SpawnBlueprintActors(const TArray<FVector>& FloorLocatio
 
     UWorld* World = GetWorld();
     if (!World)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("SpawnBlueprintActors: GetWorld() returned null. Cannot spawn blueprint actors."));
         return;
+    }
 
     int32 SpawnedCount = 0;
 
@@ -998,36 +1015,26 @@ void ADungeonGenerator::SpawnBlueprintActors(const TArray<FVector>& FloorLocatio
                     NewActor->SetActorScale3D(BPParams.Scale);
                     NewActor->Tags.AddUnique(DUNGEON_BP_TAG);
 
-                    // Corrected Logging Here:
-                    UE_LOG(LogTemp, Warning, TEXT("SpawnBlueprintActors: Actor %s spawned. Attempting to tag with %s. Current tags: [%s]"),
-                        *NewActor->GetName(),
-                        *DUNGEON_BP_TAG.ToString(),
-                        *FString::JoinBy(NewActor->Tags, TEXT(", "), [](const FName& Tag) { return Tag.ToString(); }));
-
-                    if (NewActor->Tags.Contains(DUNGEON_BP_TAG)) {
-                        UE_LOG(LogTemp, Warning, TEXT("SpawnBlueprintActors: Actor %s successfully CONTAINS tag %s"), *NewActor->GetName(), *DUNGEON_BP_TAG.ToString());
-                    }
-                    else {
-                        UE_LOG(LogTemp, Error, TEXT("SpawnBlueprintActors: Actor %s FAILED to contain tag %s after adding!"), *NewActor->GetName(), *DUNGEON_BP_TAG.ToString());
+                    if (!NewActor->Tags.Contains(DUNGEON_BP_TAG))
+                    {
+                        UE_LOG(DungeonGenerator, Error, TEXT("SpawnBlueprintActors: Actor '%s' FAILED to receive tag '%s' after AddUnique."), *NewActor->GetName(), *DUNGEON_BP_TAG.ToString());
                     }
                     SpawnedCount++;
                 }
                 else // NewActor is NULL, but BPParams.BlueprintClass was valid
                 {
-                    // Corrected Logging Here:
-                    UE_LOG(LogTemp, Error, TEXT("SpawnBlueprintActors: Failed to spawn actor for BlueprintClass %s at location %s. SpawnActor returned null."),
-                        *BPParams.BlueprintClass->GetName(), // BPParams is in scope
+                    UE_LOG(DungeonGenerator, Error, TEXT("SpawnBlueprintActors: SpawnActor returned null for BlueprintClass '%s' at location %s."),
+                        *BPParams.BlueprintClass->GetName(),
                         *SpawnLocation.ToString());
                 }
             }
             else if (!BPParams.BlueprintClass && FMath::FRand() <= BPParams.SpawnChance) // Check if BPClass itself was null
             {
-                // Corrected Logging Here:
-                UE_LOG(LogTemp, Error, TEXT("SpawnBlueprintActors: Attempted to spawn but BlueprintClass was null for an entry in BlueprintActorsToSpawn. SpawnChance met."));
+                UE_LOG(DungeonGenerator, Warning, TEXT("SpawnBlueprintActors: SpawnChance was met but BlueprintClass is null for an entry in BlueprintActorsToSpawn at location %s."), *FloorPos.ToString());
             }
         }
     }
-    UE_LOG(LogTemp, Log, TEXT("Spawned %d blueprint actors"), SpawnedCount);
+    UE_LOG(DungeonGenerator, Log, TEXT("SpawnBlueprintActors: Spawned %d blueprint actor(s) across %d location(s)."), SpawnedCount, FloorLocations.Num());
 }
 
 void ADungeonGenerator::SpawnStaticMeshes(const TArray<FVector>& FloorLocations, bool bIsRoom)
@@ -1045,8 +1052,14 @@ void ADungeonGenerator::SpawnStaticMeshes(const TArray<FVector>& FloorLocations,
             if (MeshParams.bOnlySpawnInRooms && !bIsRoom)
                 continue;
 
-            if (FMath::FRand() <= MeshParams.SpawnChance && MeshParams.StaticMesh)
+            if (FMath::FRand() <= MeshParams.SpawnChance)
             {
+                if (!MeshParams.StaticMesh)
+                {
+                    UE_LOG(DungeonGenerator, Warning, TEXT("SpawnStaticMeshes: SpawnChance was met but StaticMesh is null for an entry in StaticMeshesToSpawn at location %s. Skipping."), *FloorPos.ToString());
+                    continue;
+                }
+
                 // Create a random offset between min and max values
                 FVector RandomOffset;
                 RandomOffset.X = FMath::RandRange(MeshParams.LocationOffsetMin.X, MeshParams.LocationOffsetMax.X);
@@ -1066,6 +1079,10 @@ void ADungeonGenerator::SpawnStaticMeshes(const TArray<FVector>& FloorLocations,
                 {
                     SpawnedMeshes++;
                 }
+                else
+                {
+                    UE_LOG(DungeonGenerator, Error, TEXT("SpawnStaticMeshes: SpawnDungeonMesh returned null for mesh '%s' at location %s."), *MeshParams.StaticMesh->GetName(), *SpawnLocation.ToString());
+                }
             }
         }
     }
@@ -1078,6 +1095,14 @@ AStaticMeshActor* ADungeonGenerator::SpawnDungeonMesh(const FTransform& InTransf
     // Ensure we have a mesh to spawn
     if (!SMToSpawn)
     {
+        UE_LOG(DungeonGenerator, Error, TEXT("SpawnDungeonMesh: SMToSpawn is null. Cannot spawn mesh at location %s."), *InTransform.GetLocation().ToString());
+        return nullptr;
+    }
+
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("SpawnDungeonMesh: GetWorld() returned null. Cannot spawn mesh '%s'."), *SMToSpawn->GetName());
         return nullptr;
     }
 
@@ -1086,7 +1111,7 @@ AStaticMeshActor* ADungeonGenerator::SpawnDungeonMesh(const FTransform& InTransf
     ActorSpawnParams.Instigator = GetInstigator();
     ActorSpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-    AStaticMeshActor* SMActor = GetWorld()->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), InTransform, ActorSpawnParams);
+    AStaticMeshActor* SMActor = World->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), InTransform, ActorSpawnParams);
     if (SMActor)
     {
         // Set mobility to static for better performance, but can be changed for interactive elements
@@ -1106,12 +1131,23 @@ AStaticMeshActor* ADungeonGenerator::SpawnDungeonMesh(const FTransform& InTransf
         SMActor->SetReplicates(true);
         SMActor->SetReplicateMovement(false); // Static meshes don't need movement replication
     }
+    else
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("SpawnDungeonMesh: SpawnActor returned null for mesh '%s' at location %s."), *SMToSpawn->GetName(), *InTransform.GetLocation().ToString());
+    }
 
     return SMActor;
 }
 
 void ADungeonGenerator::DestroyDungeonMeshes()
 {
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("DestroyDungeonMeshes: GetWorld() returned null. Cannot find or destroy dungeon actors."));
+        return;
+    }
+
     // Arrays to store actors we need to destroy
     TArray<AActor*> DungeonMeshes;
     TArray<AActor*> CeilingMeshes;
@@ -1120,34 +1156,37 @@ void ADungeonGenerator::DestroyDungeonMeshes()
     TArray<AActor*> BlueprintActors;
 
     // Find all actors with our tags
-    UGameplayStatics::GetAllActorsWithTag(GetWorld(), DUNGEON_MESH_TAG, DungeonMeshes);
-    UGameplayStatics::GetAllActorsWithTag(GetWorld(), CEILING_MESH_TAG, CeilingMeshes);
-    UGameplayStatics::GetAllActorsWithTag(GetWorld(), PILLAR_MESH_TAG, PillarMeshes);
-    UGameplayStatics::GetAllActorsWithTag(GetWorld(), PROP_MESH_TAG, PropMeshes);
-    UGameplayStatics::GetAllActorsWithTag(GetWorld(), DUNGEON_BP_TAG, BlueprintActors);
+    UGameplayStatics::GetAllActorsWithTag(World, DUNGEON_MESH_TAG, DungeonMeshes);
+    UGameplayStatics::GetAllActorsWithTag(World, CEILING_MESH_TAG, CeilingMeshes);
+    UGameplayStatics::GetAllActorsWithTag(World, PILLAR_MESH_TAG, PillarMeshes);
+    UGameplayStatics::GetAllActorsWithTag(World, PROP_MESH_TAG, PropMeshes);
+    UGameplayStatics::GetAllActorsWithTag(World, DUNGEON_BP_TAG, BlueprintActors);
 
     // Log cleanup for debugging
-    UE_LOG(LogTemp, Warning, TEXT("Cleaning up dungeon: found %d blueprint actors to destroy"), BlueprintActors.Num());
+    UE_LOG(DungeonGenerator, Log, TEXT("DestroyDungeonMeshes: Found %d mesh, %d ceiling, %d pillar, %d prop, and %d blueprint actor(s) to destroy."),
+        DungeonMeshes.Num(), CeilingMeshes.Num(), PillarMeshes.Num(), PropMeshes.Num(), BlueprintActors.Num());
+
+    int32 TotalDestroyed = 0;
 
     // Destroy all found actors
     for (AActor* Actor : DungeonMeshes)
     {
-        if (Actor) Actor->Destroy();
+        if (Actor) { Actor->Destroy(); TotalDestroyed++; }
     }
 
     for (AActor* Actor : CeilingMeshes)
     {
-        if (Actor) Actor->Destroy();
+        if (Actor) { Actor->Destroy(); TotalDestroyed++; }
     }
 
     for (AActor* Actor : PillarMeshes)
     {
-        if (Actor) Actor->Destroy();
+        if (Actor) { Actor->Destroy(); TotalDestroyed++; }
     }
 
     for (AActor* Actor : PropMeshes)
     {
-        if (Actor) Actor->Destroy();
+        if (Actor) { Actor->Destroy(); TotalDestroyed++; }
     }
 
     for (AActor* Actor : BlueprintActors)
@@ -1156,8 +1195,11 @@ void ADungeonGenerator::DestroyDungeonMeshes()
         {
             UE_LOG(LogTemp, Warning, TEXT("Destroying blueprint actor: %s"), *Actor->GetName());
             Actor->Destroy();
+            TotalDestroyed++;
         }
     }
+
+    UE_LOG(DungeonGenerator, Log, TEXT("DestroyDungeonMeshes: Destroyed %d total actor(s)."), TotalDestroyed);
 
     // Make sure to reset data structures too
     GeneratedRooms.Empty();
@@ -1169,7 +1211,12 @@ void ADungeonGenerator::DestroyDungeonMeshes()
 void ADungeonGenerator::ApplyConfigFromDataAsset()
 {
     if (!DungeonConfig)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ApplyConfigFromDataAsset: DungeonConfig is null. No configuration has been applied."));
         return;
+    }
+
+    UE_LOG(DungeonGenerator, Log, TEXT("ApplyConfigFromDataAsset: Applying configuration from data asset '%s'."), *DungeonConfig->GetName());
 
     // Copy all settings from data asset
     TileMapRows = DungeonConfig->TileMapRows;
@@ -1207,11 +1254,11 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
     URoomThemeDataAsset* Theme = Room.RoomTheme;
     if (!Theme)
     {
-        UE_LOG(LogTemp, Warning, TEXT("SpawnThemedRoom: Attempted to spawn a themed room but Room.RoomTheme was null. Skipping."));
+        UE_LOG(DungeonGenerator, Warning, TEXT("SpawnThemedRoom: Room.RoomTheme is null. Skipping themed room spawn."));
         return;
     }
 
-    UE_LOG(LogTemp, Log, TEXT("SpawnThemedRoom: Spawning themed room with theme '%s' for %d floor tiles."), *Theme->GetName(), Room.FloorTileWorldLocations.Num());
+    UE_LOG(DungeonGenerator, Log, TEXT("SpawnThemedRoom: Spawning themed room with theme '%s' for %d floor tile(s)."), *Theme->GetName(), Room.FloorTileWorldLocations.Num());
 
     // Spawn floor tiles using theme floor mesh
     for (const FVector& FloorPos : Room.FloorTileWorldLocations)
@@ -1261,19 +1308,19 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
         {
             if (!GridMeshParams.Mesh)
             {
-                UE_LOG(LogTemp, Warning, TEXT("SpawnThemedRoom: GridPlacedMesh entry has a null Mesh. Skipping this entry."));
+                UE_LOG(DungeonGenerator, Warning, TEXT("SpawnThemedRoom: A GridPlacedMeshes entry has a null Mesh. Skipping this entry."));
                 continue;
             }
             if (GridMeshParams.GridPattern.Num() == 0 || GridMeshParams.GridWidth <= 0)
             {
-                UE_LOG(LogTemp, Warning, TEXT("SpawnThemedRoom: GridPlacedMesh '%s' has invalid GridPattern or GridWidth. Skipping."), *GridMeshParams.Mesh->GetName());
+                UE_LOG(DungeonGenerator, Warning, TEXT("SpawnThemedRoom: GridPlacedMesh '%s' has an invalid GridPattern or GridWidth (%d). Skipping."), *GridMeshParams.Mesh->GetName(), GridMeshParams.GridWidth);
                 continue;
             }
 
             int32 GridHeight = FMath::CeilToInt(static_cast<float>(GridMeshParams.GridPattern.Num()) / GridMeshParams.GridWidth);
             if (GridHeight <= 0)
             {
-                UE_LOG(LogTemp, Warning, TEXT("SpawnThemedRoom: GridPlacedMesh '%s' resulted in invalid GridHeight. Skipping."), *GridMeshParams.Mesh->GetName());
+                UE_LOG(DungeonGenerator, Warning, TEXT("SpawnThemedRoom: GridPlacedMesh '%s' resulted in an invalid GridHeight (%d). Skipping."), *GridMeshParams.Mesh->GetName(), GridHeight);
                 continue;
             }
 
@@ -1365,20 +1412,9 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
                             NewActor->SetActorScale3D(BPParams.Scale);
                             NewActor->Tags.AddUnique(DUNGEON_BP_TAG);
 
-                            // Logging for successful spawn and tagging
-                            UE_LOG(LogTemp, Warning, TEXT("SpawnThemedRoom: Actor %s spawned (theme BP: %s). Attempting to tag with %s. Current tags: [%s]"),
-                                *NewActor->GetName(),
-                                *BPParams.BlueprintClass->GetName(),
-                                *DUNGEON_BP_TAG.ToString(),
-                                *FString::JoinBy(NewActor->Tags, TEXT(", "), [](const FName& Tag) { return Tag.ToString(); }));
-
-                            if (NewActor->Tags.Contains(DUNGEON_BP_TAG))
+                            if (!NewActor->Tags.Contains(DUNGEON_BP_TAG))
                             {
-                                UE_LOG(LogTemp, Warning, TEXT("SpawnThemedRoom: Actor %s (theme BP) successfully CONTAINS tag %s."), *NewActor->GetName(), *DUNGEON_BP_TAG.ToString());
-                            }
-                            else
-                            {
-                                UE_LOG(LogTemp, Error, TEXT("SpawnThemedRoom: Actor %s (theme BP) FAILED to contain tag %s after AddUnique! This is unexpected. Tags: [%s]"),
+                                UE_LOG(DungeonGenerator, Error, TEXT("SpawnThemedRoom: Actor '%s' FAILED to receive tag '%s' after AddUnique. Tags: [%s]"),
                                     *NewActor->GetName(),
                                     *DUNGEON_BP_TAG.ToString(),
                                     *FString::JoinBy(NewActor->Tags, TEXT(", "), [](const FName& Tag) { return Tag.ToString(); }));
@@ -1387,7 +1423,7 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
                         else
                         {
                             // Logging for failed spawn (SpawnActor returned null)
-                            UE_LOG(LogTemp, Error, TEXT("SpawnThemedRoom: Failed to spawn theme actor for BlueprintClass %s at location %s. SpawnActor returned null."),
+                            UE_LOG(DungeonGenerator, Error, TEXT("SpawnThemedRoom: SpawnActor returned null for BlueprintClass '%s' at location %s."),
                                 *BPParams.BlueprintClass->GetName(),
                                 *SpawnLocation.ToString());
                         }
@@ -1395,7 +1431,7 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
                     else
                     {
                         // Logging for null BlueprintClass when spawn chance was met
-                        UE_LOG(LogTemp, Warning, TEXT("SpawnThemedRoom: Attempted to spawn theme BP but BlueprintClass was null for an entry in ThemeSpecificBlueprints. SpawnChance (%f) was met."), BPParams.SpawnChance);
+                        UE_LOG(DungeonGenerator, Warning, TEXT("SpawnThemedRoom: SpawnChance (%f) was met but BlueprintClass is null for an entry in ThemeSpecificBlueprints at location %s."), BPParams.SpawnChance, *FloorPos.ToString());
                     }
                 }
                 // No 'else' here if spawn chance wasn't met, as that's expected behavior.
@@ -1404,7 +1440,7 @@ void ADungeonGenerator::SpawnThemedRoom(const FRoom& Room)
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("SpawnThemedRoom: GetWorld() returned null. Cannot spawn theme-specific blueprints."));
+        UE_LOG(DungeonGenerator, Error, TEXT("SpawnThemedRoom: GetWorld() returned null. Cannot spawn theme-specific blueprints for theme '%s'."), *Theme->GetName());
     }
 }
 
@@ -1431,9 +1467,18 @@ void ADungeonGenerator::SpawnDungeonFromDataTable()
     }
 
     // Calculate tile size from first template if needed
-    float DataTableFloorTileSize = bAutoFloorTileSizeGeneration ?
-        CalculateFloorTileSize(*RoomTemplates[0]->RoomTileMesh) :
-        FloorTileSize;
+    float DataTableFloorTileSize = FloorTileSize;
+    if (bAutoFloorTileSizeGeneration)
+    {
+        if (RoomTemplates[0]->RoomTileMesh)
+        {
+            DataTableFloorTileSize = CalculateFloorTileSize(*RoomTemplates[0]->RoomTileMesh);
+        }
+        else
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("SpawnDungeonFromDataTable: First room template has a null RoomTileMesh. Cannot auto-calculate floor tile size; using current FloorTileSize (%f)."), FloorTileSize);
+        }
+    }
 
     UE_LOG(DungeonGenerator, Log, TEXT("Spawning dungeon from data table with %d room templates"), RoomTemplates.Num());
 
@@ -1767,6 +1812,10 @@ void ADungeonGenerator::GenerateDungeon()
     {
         ApplyConfigFromDataAsset();
     }
+    else if (bUseConfigDataAsset && !DungeonConfig)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("GenerateDungeon: bUseConfigDataAsset is true but DungeonConfig is null. Using current property values instead."));
+    }
 
     // Check execution authority in multiplayer (but allow editor generation)
     if (GetNetMode() != NM_Standalone && !HasAuthority() && !GIsEditor)
@@ -1795,6 +1844,13 @@ void ADungeonGenerator::GenerateDungeon()
 
     // Generate rooms
     GenerateRooms();
+
+    if (GeneratedRooms.Num() == 0)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("GenerateDungeon: No rooms were generated (seed=%d, TileMap=%dx%d, RoomsToGenerate=%d). Aborting dungeon generation."),
+            DungeonSeed, TileMapRows, TileMapColumns, RoomsToGenerate);
+        return;
+    }
 
     // Connect rooms with corridors
     ConnectRooms();
