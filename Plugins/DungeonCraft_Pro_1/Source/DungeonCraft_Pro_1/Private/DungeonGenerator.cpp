@@ -1761,11 +1761,162 @@ void ADungeonGenerator::SpawnGenericDungeon(const TArray<FVector>& FloorTileLoca
     }
 }
 
+bool ADungeonGenerator::ValidateConfig()
+{
+    bool bIsValid = true;
+
+    // --- Tile map dimensions ---
+    if (TileMapRows < 10)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("ValidateConfig: TileMapRows (%d) must be at least 10. Generation blocked."), TileMapRows);
+        bIsValid = false;
+    }
+
+    if (TileMapColumns < 10)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("ValidateConfig: TileMapColumns (%d) must be at least 10. Generation blocked."), TileMapColumns);
+        bIsValid = false;
+    }
+
+    // --- Room size constraints ---
+    if (MinRoomSize < 2)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: MinRoomSize (%d) is below minimum of 2. Clamping to 2."), MinRoomSize);
+        MinRoomSize = 2;
+    }
+
+    if (MaxRoomSize <= MinRoomSize)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("ValidateConfig: MaxRoomSize (%d) must be greater than MinRoomSize (%d). Generation blocked."), MaxRoomSize, MinRoomSize);
+        bIsValid = false;
+    }
+
+    if (bIsValid && MaxRoomSize >= TileMapRows)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("ValidateConfig: MaxRoomSize (%d) must be less than TileMapRows (%d). Generation blocked."), MaxRoomSize, TileMapRows);
+        bIsValid = false;
+    }
+
+    if (bIsValid && MaxRoomSize >= TileMapColumns)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("ValidateConfig: MaxRoomSize (%d) must be less than TileMapColumns (%d). Generation blocked."), MaxRoomSize, TileMapColumns);
+        bIsValid = false;
+    }
+
+    // --- Room count ---
+    if (RoomsToGenerate < 1)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: RoomsToGenerate (%d) is below minimum of 1. Clamping to 1."), RoomsToGenerate);
+        RoomsToGenerate = 1;
+    }
+
+    // --- Floor tile size ---
+    if (!bAutoFloorTileSizeGeneration && FloorTileSize <= 0.0f)
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("ValidateConfig: FloorTileSize (%.2f) must be positive when auto-calculation is disabled. Generation blocked."), FloorTileSize);
+        bIsValid = false;
+    }
+
+    // --- Wall width ---
+    if (WallWidth <= 0.0f)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: WallWidth (%.2f) must be positive. Clamping to 1.0."), WallWidth);
+        WallWidth = 1.0f;
+    }
+
+    // --- Blueprint spawn parameters ---
+    for (int32 i = 0; i < BlueprintActorsToSpawn.Num(); i++)
+    {
+        FBlueprintSpawnParams& Params = BlueprintActorsToSpawn[i];
+
+        if (!Params.BlueprintClass)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: BlueprintActorsToSpawn[%d] has no BlueprintClass assigned. This entry will be skipped during spawning."), i);
+        }
+
+        if (Params.SpawnChance < 0.0f || Params.SpawnChance > 1.0f)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: BlueprintActorsToSpawn[%d] SpawnChance (%.2f) is outside [0, 1]. Clamping."), i, Params.SpawnChance);
+            Params.SpawnChance = FMath::Clamp(Params.SpawnChance, 0.0f, 1.0f);
+        }
+
+        for (int32 Axis = 0; Axis < 3; Axis++)
+        {
+            if (Params.LocationOffsetMin[Axis] > Params.LocationOffsetMax[Axis])
+            {
+                UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: BlueprintActorsToSpawn[%d] LocationOffsetMin[%d] (%.2f) > LocationOffsetMax[%d] (%.2f). Swapping."),
+                    i, Axis, Params.LocationOffsetMin[Axis], Axis, Params.LocationOffsetMax[Axis]);
+                Swap(Params.LocationOffsetMin[Axis], Params.LocationOffsetMax[Axis]);
+            }
+        }
+    }
+
+    // --- Static mesh spawn parameters ---
+    for (int32 i = 0; i < StaticMeshesToSpawn.Num(); i++)
+    {
+        FStaticMeshSpawnParams& Params = StaticMeshesToSpawn[i];
+
+        if (!Params.StaticMesh)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: StaticMeshesToSpawn[%d] has no StaticMesh assigned. This entry will be skipped during spawning."), i);
+        }
+
+        if (Params.SpawnChance < 0.0f || Params.SpawnChance > 1.0f)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: StaticMeshesToSpawn[%d] SpawnChance (%.2f) is outside [0, 1]. Clamping."), i, Params.SpawnChance);
+            Params.SpawnChance = FMath::Clamp(Params.SpawnChance, 0.0f, 1.0f);
+        }
+
+        for (int32 Axis = 0; Axis < 3; Axis++)
+        {
+            if (Params.LocationOffsetMin[Axis] > Params.LocationOffsetMax[Axis])
+            {
+                UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: StaticMeshesToSpawn[%d] LocationOffsetMin[%d] (%.2f) > LocationOffsetMax[%d] (%.2f). Swapping."),
+                    i, Axis, Params.LocationOffsetMin[Axis], Axis, Params.LocationOffsetMax[Axis]);
+                Swap(Params.LocationOffsetMin[Axis], Params.LocationOffsetMax[Axis]);
+            }
+        }
+    }
+
+    // --- Decal spawn parameters ---
+    for (int32 i = 0; i < FloorDecalsToSpawn.Num(); i++)
+    {
+        FDecalSpawnParams& Params = FloorDecalsToSpawn[i];
+
+        if (!Params.DecalMaterial)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: FloorDecalsToSpawn[%d] has no DecalMaterial assigned. This entry will be skipped during spawning."), i);
+        }
+
+        if (Params.SpawnChance < 0.0f || Params.SpawnChance > 1.0f)
+        {
+            UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: FloorDecalsToSpawn[%d] SpawnChance (%.2f) is outside [0, 1]. Clamping."), i, Params.SpawnChance);
+            Params.SpawnChance = FMath::Clamp(Params.SpawnChance, 0.0f, 1.0f);
+        }
+    }
+
+    // --- Pillar spawn parameters ---
+    if (PillarSettings.SpawnChance < 0.0f || PillarSettings.SpawnChance > 1.0f)
+    {
+        UE_LOG(DungeonGenerator, Warning, TEXT("ValidateConfig: PillarSettings SpawnChance (%.2f) is outside [0, 1]. Clamping."), PillarSettings.SpawnChance);
+        PillarSettings.SpawnChance = FMath::Clamp(PillarSettings.SpawnChance, 0.0f, 1.0f);
+    }
+
+    return bIsValid;
+}
+
 void ADungeonGenerator::GenerateDungeon()
 {
     if (bUseConfigDataAsset && DungeonConfig)
     {
         ApplyConfigFromDataAsset();
+    }
+
+    // Validate configuration before proceeding
+    if (!ValidateConfig())
+    {
+        UE_LOG(DungeonGenerator, Error, TEXT("GenerateDungeon: Config validation failed. Generation blocked. Correct the errors reported above and try again."));
+        return;
     }
 
     // Check execution authority in multiplayer (but allow editor generation)
